@@ -15,20 +15,17 @@ import (
 	"github.com/unrolled/logger"
 
 	// Stats/Metrics
-	"github.com/rcrowley/go-metrics"
+	metrics "github.com/rcrowley/go-metrics"
 	"github.com/rcrowley/go-metrics/exp"
 	"github.com/thoas/stats"
 
-	"github.com/GeertJohan/go.rice"
+	rice "github.com/GeertJohan/go.rice"
 	"github.com/julienschmidt/httprouter"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/russross/blackfriday"
 )
 
-var (
-	validPage = regexp.MustCompile("([A-Z][a-z]+[A-Z][a-zA-Z]+)")
-	validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
-)
+var validPage = regexp.MustCompile("([A-Z][a-z]+[A-Z][a-zA-Z]+)")
 
 // Page ...
 type Page struct {
@@ -36,6 +33,7 @@ type Page struct {
 	Body  []byte
 	HTML  template.HTML
 	Brand string
+	Root  string
 }
 
 func (p *Page) Save(datadir string) error {
@@ -66,6 +64,7 @@ func LoadPage(title string, config Config, baseurl *url.URL) (*Page, error) {
 		Body:  body,
 		HTML:  template.HTML(html),
 		Brand: config.brand,
+		Root:  config.root,
 	}, nil
 }
 
@@ -128,7 +127,7 @@ func (s *Server) IndexHandler() httprouter.Handle {
 	return func(w http.ResponseWriter, r *http.Request, p httprouter.Params) {
 		s.counters.Inc("n_index")
 
-		u, err := url.Parse(fmt.Sprintf("./view/FrontPage"))
+		u, err := url.Parse(fmt.Sprintf("%s/view/FrontPage", s.config.root))
 		if err != nil {
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 		}
@@ -143,16 +142,14 @@ func (s *Server) EditHandler() httprouter.Handle {
 		s.counters.Inc("n_edit")
 
 		title := p.ByName("title")
-
-		u, err := url.Parse("../view/")
+		baseurl, err := r.URL.Parse(fmt.Sprintf("%s/view/", s.config.root))
 		if err != nil {
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 		}
-		baseurl := r.URL.ResolveReference(u)
 
 		page, err := LoadPage(title, s.config, baseurl)
 		if err != nil {
-			page = &Page{Title: title, Brand: s.config.brand}
+			page = &Page{Title: title, Brand: s.config.brand, Root: s.config.root}
 		}
 
 		s.render("edit", w, page)
@@ -174,14 +171,14 @@ func (s *Server) SaveHandler() httprouter.Handle {
 
 		body := r.Form.Get("body")
 
-		page := &Page{Title: title, Body: []byte(body), Brand: s.config.brand}
+		page := &Page{Title: title, Body: []byte(body), Brand: s.config.brand, Root: s.config.root}
 		err = page.Save(s.config.data)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		u, err := url.Parse(fmt.Sprintf("/view/%s", title))
+		u, err := url.Parse(fmt.Sprintf("%s/view/%s", s.config.root, title))
 		if err != nil {
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 		}
@@ -197,11 +194,10 @@ func (s *Server) ViewHandler() httprouter.Handle {
 
 		title := p.ByName("title")
 
-		u, err := url.Parse("../view/")
+		baseurl, err := r.URL.Parse(fmt.Sprintf("%s/view/", s.config.root))
 		if err != nil {
 			http.Error(w, "Internal Error", http.StatusInternalServerError)
 		}
-		baseurl := r.URL.ResolveReference(u)
 
 		page, err := LoadPage(title, s.config, baseurl)
 		if err != nil {
